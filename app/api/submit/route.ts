@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySession } from '@/lib/session';
-import { appendSubmission } from '@/lib/google-sheets';
+import { appendSubmission, ActivityItem } from '@/lib/google-sheets';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,17 +18,9 @@ export async function POST(request: NextRequest) {
       person,
       account,
       entryType,
-      platform,
-      postType,
-      postCount,
-      outreachCount,
-      pollsPosted,
-      groupsJoined,
-      groupPostCount,
-      engagementNotes,
-      contentCreationNotes,
       rawText,
-      parsedByAI
+      parsedByAI,
+      activityItems
     } = body;
 
     // Validate required fields
@@ -40,23 +32,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid entry type' }, { status: 400 });
     }
 
+    if (!Array.isArray(activityItems)) {
+      return NextResponse.json({ error: 'activityItems must be a valid array' }, { status: 400 });
+    }
+
+    // Clean activity items
+    const cleanedItems: ActivityItem[] = activityItems.map((item: any) => ({
+      activityType: String(item.activityType || '').trim(),
+      platform: item.platform ? String(item.platform).trim() : null,
+      description: String(item.description || '').trim(),
+      count: item.count !== undefined && item.count !== null ? Number(item.count) : null,
+    }));
+
     // Append to Google Sheets
     const result = await appendSubmission({
       date,
       person,
       account,
       entryType,
-      platform: platform || '',
-      postType: postType || '',
-      postCount: Number(postCount) || 0,
-      outreachCount: Number(outreachCount) || 0,
-      pollsPosted: Number(pollsPosted) || 0,
-      groupsJoined: Number(groupsJoined) || 0,
-      groupPostCount: Number(groupPostCount) || 0,
-      engagementNotes: engagementNotes || '',
-      contentCreationNotes: contentCreationNotes || '',
-      rawText: rawText || '',
+      rawText: rawText || `Submitted manually by ${person}`,
       parsedByAI: Boolean(parsedByAI),
+      activityItems: cleanedItems,
     });
 
     return NextResponse.json({ success: true, data: result });

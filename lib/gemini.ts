@@ -1,3 +1,5 @@
+import { ActivityItem } from './google-sheets';
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 async function callGemini(prompt: string, systemInstruction?: string): Promise<string> {
@@ -10,7 +12,7 @@ async function callGemini(prompt: string, systemInstruction?: string): Promise<s
   const payload: any = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: 0.1, // low temperature for consistent extraction
+      temperature: 0.1,
     },
   };
 
@@ -41,67 +43,80 @@ async function callGemini(prompt: string, systemInstruction?: string): Promise<s
   return text;
 }
 
-export interface ParsedWorkUpdate {
-  platform: string;
-  postType: string;
-  postCount: number;
-  outreachCount: number;
-  pollsPosted: number;
-  groupsJoined: number;
-  groupPostCount: number;
-  engagementNotes: string;
-  contentCreationNotes: string;
-}
-
-export async function parseTextWithGemini(rawText: string): Promise<ParsedWorkUpdate> {
-  const systemInstruction = `You extract structured data from a daily marketing work-update message written in casual English/Hindi mix. Return ONLY valid JSON matching this schema, with no markdown fences or extra text:
+export async function parseTextWithGemini(rawText: string): Promise<ActivityItem[]> {
+  const systemInstruction = `You extract a list of work activity items from a daily marketing update message (casual English/Hindi mix). The message may describe any number of distinct tasks — do not assume a fixed set of task types. Return ONLY a valid JSON array, no markdown fences, no extra text, matching this schema per item:
 {
-  "platform": string,
-  "postType": string,
-  "postCount": number,
-  "outreachCount": number,
-  "pollsPosted": number,
-  "groupsJoined": number,
-  "groupPostCount": number,
-  "engagementNotes": string,
-  "contentCreationNotes": string
+  "activityType": string,
+  "platform": string | null,
+  "description": string,
+  "count": number | null
 }
-If a field isn't mentioned, use 0 for numbers and "" for text. Never invent numbers that aren't stated or clearly implied.`;
+Rules:
+- Create one item per distinct task or metric mentioned, however many there are.
+- If a task doesn't fit a common category (post, outreach, poll, group joining, group posting, engagement), invent a short reasonable activityType label rather than forcing it into an existing one.
+- Only fill "count" when a number is actually stated or clearly implied. Never invent numbers.
+- Keep "description" short (under 15 words).`;
 
   const prompt = `Text to parse:\n"""\n${rawText}\n"""`;
 
   const text = await callGemini(prompt, systemInstruction);
   
-  // Clean markdown JSON code fences if they are returned despite system prompt
   let cleaned = text.trim();
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(json)?\s*/i, '').replace(/```$/, '').trim();
   }
 
   try {
-    return JSON.parse(cleaned) as ParsedWorkUpdate;
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed)) {
+      throw new Error('Gemini did not return an array of items.');
+    }
+    return parsed.map((item: any) => ({
+      activityType: String(item.activityType || '').trim(),
+      platform: item.platform ? String(item.platform).trim() : null,
+      description: String(item.description || '').trim(),
+      count: item.count !== undefined && item.count !== null ? Number(item.count) : null,
+    }));
   } catch (err) {
     console.error('Failed to parse Gemini output as JSON:', cleaned, err);
     throw new Error('Failed to parse structured response from Gemini.');
   }
 }
 
-export async function generateGapSummary(plan: any, update: any): Promise<string> {
-  const planMetrics = `Post Count: ${plan.postCount}, Outreach: ${plan.outreachCount}, Polls: ${plan.pollsPosted}, Groups Joined: ${plan.groupsJoined}, Group Posts: ${plan.groupPostCount}`;
-  const updateMetrics = `Post Count: ${update.postCount}, Outreach: ${update.outreachCount}, Polls: ${update.pollsPosted}, Groups Joined: ${update.groupsJoined}, Group Posts: ${update.groupPostCount}`;
+export interface ActivityMismatch {
+  plan?: ActivityItem;
+  update?: ActivityItem;
+  type: 'missing' | 'variance';
+}
 
-  const prompt = `Compare these planned metrics and actual updated metrics for marketing work:
-Plan: ${planMetrics}
-Update: ${updateMetrics}
+export async function generateGapSummary(mismatches: ActivityMismatch[]): Promise<string> {
+  if (!mismatches || mismatches.length === 0) {
+    return '';
+  }
 
-Generate a concise, one-line natural language summary in English highlighting only what planned work was missed or short (e.g. 'Planned 5 group joins, reported 3' or 'Missed 2 group joins and 4 outreach messages'). Keep it under 15 words. Return ONLY the plain text summary, no markdown, no quotes, no extra text.`;
+  const mismatchDetails = mismatches.map((m) => {
+    if (m.type === 'missing') {
+      const p = m.plan!;
+      const platformStr = p.platform ? ` on ${p.platform}` : '';
+      return `- Planned task was missed entirely: "${p.activityType}${platformStr} (${p.description})"${p.count !== null ? ` with count ${p.count}` : ''}`;
+    } else {
+      const p = m.plan!;
+      const u = m.update!;
+      const platformStr = p.platform ? ` on ${p.platform}` : '';
+      return `- Planned "${p.activityType}${platformStr}" count was ${p.count}, but actually reported ${u.count}`;
+    }
+  }).join('\n');
+
+  const prompt = `Compare the following planned work discrepancies against what was actually completed:
+${mismatchDetails}
+
+Generate a concise, one-line natural language summary in English highlighting only what planned work was missed or fell short (e.g. 'Planned 5 group joins, reported 3' or 'Missed 2 group joins and 4 outreach messages'). Keep it under 15 words. Return ONLY the plain text summary, no markdown, no quotes, no extra text.`;
 
   try {
     const text = await callGemini(prompt);
-    // Clean outer quotes and trim
     return text.trim().replace(/^["']|["']$/g, '');
   } catch (err) {
     console.error('Error generating gap summary with Gemini:', err);
-    return 'Gap detected in reported metrics.';
+    return 'Gap detected in completed activities.';
   }
 }

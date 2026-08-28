@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySession } from '@/lib/session';
-import { getSubmissions, Submission } from '@/lib/google-sheets';
-import { generateGapSummary } from '@/lib/gemini';
+import { getSubmissions, Submission, ActivityItem } from '@/lib/google-sheets';
+import { generateGapSummary, ActivityMismatch } from '@/lib/gemini';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,8 +54,8 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // 2. Convert to paired rows
-    const pairedRows: PairedRow[] = [];
+    // 2. Convert to grouped rows and calculate gaps
+    const pairedRows: (PairedRow & { mismatches: ActivityMismatch[] })[] = [];
 
     for (const key in groups) {
       const g = groups[key];
@@ -64,24 +64,38 @@ export async function GET(request: NextRequest) {
 
       let hasGap = false;
       let gapSummary = '';
+      const mismatches: ActivityMismatch[] = [];
 
       if (plan && update) {
-        // Compare metrics
-        const postCountGap = update.postCount < plan.postCount;
-        const outreachGap = update.outreachCount < plan.outreachCount;
-        const pollsGap = update.pollsPosted < plan.pollsPosted;
-        const groupsJoinedGap = update.groupsJoined < plan.groupsJoined;
-        const groupPostGap = update.groupPostCount < plan.groupPostCount;
+        // Find mismatches rule-based
+        const planItems = plan.activityItems || [];
+        const updateItems = update.activityItems || [];
 
-        if (
-          postCountGap ||
-          outreachGap ||
-          pollsGap ||
-          groupsJoinedGap ||
-          groupPostGap
-        ) {
-          hasGap = true;
-        }
+        // For each item in Plan, check if there is a matching item in Update
+        planItems.forEach((pItem) => {
+          const pType = pItem.activityType.toLowerCase().trim();
+          const pPlat = (pItem.platform || '').toLowerCase().trim();
+
+          const match = updateItems.find((uItem) => {
+            const uType = uItem.activityType.toLowerCase().trim();
+            const uPlat = (uItem.platform || '').toLowerCase().trim();
+            return uType === pType && uPlat === pPlat;
+          });
+
+          if (!match) {
+            // Gap: Plan item not reported in Update
+            hasGap = true;
+            mismatches.push({ plan: pItem, type: 'missing' });
+          } else if (
+            pItem.count !== null &&
+            match.count !== null &&
+            match.count < pItem.count
+          ) {
+            // Variance: reported count is less than planned
+            hasGap = true;
+            mismatches.push({ plan: pItem, update: match, type: 'variance' });
+          }
+        });
       } else if (plan && !update) {
         hasGap = true;
         gapSummary = 'No update submitted for the plan.';
@@ -97,6 +111,7 @@ export async function GET(request: NextRequest) {
         update,
         hasGap,
         gapSummary,
+        mismatches,
       });
     }
 
@@ -112,8 +127,8 @@ export async function GET(request: NextRequest) {
     // 4. Generate Gemini gap summaries in parallel for the filtered list
     await Promise.all(
       filtered.map(async (row) => {
-        if (row.hasGap && !row.gapSummary && row.plan && row.update) {
-          row.gapSummary = await generateGapSummary(row.plan, row.update);
+        if (row.hasGap && !row.gapSummary && row.mismatches.length > 0) {
+          row.gapSummary = await generateGapSummary(row.mismatches);
         }
       })
     );
@@ -121,9 +136,12 @@ export async function GET(request: NextRequest) {
     // Sort by date descending
     filtered.sort((a, b) => b.date.localeCompare(a.date));
 
-    return NextResponse.json({ success: true, data: filtered });
+    // Strip out the internal mismatches before sending to client
+    const clientData = filtered.map(({ mismatches, ...rest }) => rest);
+
+    return NextResponse.json({ success: true, data: clientData });
   } catch (err: any) {
-    console.error('API gaps fetch error:', err);
-    return NextResponse.json({ error: err.message || 'Failed to fetch dashboard gaps' }, { status: 500 });
+    console.error('API dashboard fetch error:', err);
+    return NextResponse.json({ error: err.message || 'Failed to fetch dashboard data' }, { status: 500 });
   }
 }

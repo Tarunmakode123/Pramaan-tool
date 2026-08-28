@@ -19,7 +19,28 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const data = await getSubmissions();
+    const { searchParams } = new URL(request.url);
+    const date = searchParams.get('date');
+    const person = searchParams.get('person');
+    const account = searchParams.get('account');
+    const entryType = searchParams.get('entryType');
+
+    let data = await getSubmissions();
+
+    // Apply server-side filters if query params are present
+    if (date) {
+      data = data.filter((sub) => sub.date === date);
+    }
+    if (person) {
+      data = data.filter((sub) => sub.person.toLowerCase() === person.toLowerCase());
+    }
+    if (account) {
+      data = data.filter((sub) => sub.account.toLowerCase() === account.toLowerCase());
+    }
+    if (entryType) {
+      data = data.filter((sub) => sub.entryType === entryType);
+    }
+
     return NextResponse.json({ success: true, data });
   } catch (err: any) {
     console.error('API submissions fetch error:', err);

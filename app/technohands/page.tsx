@@ -2,7 +2,14 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Header from '@/app/components/Header';
-import { Sparkles, CheckCircle2, AlertCircle, Calendar, User, FileText, Filter } from 'lucide-react';
+import { Sparkles, CheckCircle2, AlertCircle, Calendar, User, FileText, Filter, Plus, Trash2, ClipboardList } from 'lucide-react';
+
+interface ActivityItem {
+  activityType: string;
+  platform: string | null;
+  description: string;
+  count: number | null;
+}
 
 interface Submission {
   timestamp: string;
@@ -10,17 +17,9 @@ interface Submission {
   person: string;
   account: string;
   entryType: 'Plan' | 'Update';
-  platform: string;
-  postType: string;
-  postCount: number;
-  outreachCount: number;
-  pollsPosted: number;
-  groupsJoined: number;
-  groupPostCount: number;
-  engagementNotes: string;
-  contentCreationNotes: string;
   rawText: string;
   parsedByAI: boolean;
+  activityItems: ActivityItem[];
 }
 
 interface FormState {
@@ -29,24 +28,14 @@ interface FormState {
   customPerson: string;
   account: string;
   entryType: 'Plan' | 'Update';
-  platform: string;
-  postType: string;
-  postCount: number;
-  outreachCount: number;
-  pollsPosted: number;
-  groupsJoined: number;
-  groupPostCount: number;
-  engagementNotes: string;
-  contentCreationNotes: string;
   rawText: string;
   parsedByAI: boolean;
 }
 
 export default function TechnoHandsWorkspace() {
   const getTodayString = () => {
-    const tzoffset = (new Date()).getTimezoneOffset() * 60000; // offset in milliseconds
-    const localISOTime = (new Date(Date.now() - tzoffset)).toISOString().slice(0, 10);
-    return localISOTime;
+    const tzoffset = (new Date()).getTimezoneOffset() * 60000;
+    return new Date(Date.now() - tzoffset).toISOString().slice(0, 10);
   };
 
   const initialFormState: FormState = {
@@ -55,23 +44,22 @@ export default function TechnoHandsWorkspace() {
     customPerson: '',
     account: 'Neuratantra',
     entryType: 'Plan',
-    platform: 'Instagram',
-    postType: 'Graphic',
-    postCount: 0,
-    outreachCount: 0,
-    pollsPosted: 0,
-    groupsJoined: 0,
-    groupPostCount: 0,
-    engagementNotes: '',
-    contentCreationNotes: '',
     rawText: '',
     parsedByAI: false,
   };
 
   const [form, setForm] = useState<FormState>(initialFormState);
+  const [activityItems, setActivityItems] = useState<ActivityItem[]>([
+    { activityType: 'Post', platform: 'Instagram', description: '', count: null }
+  ]);
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Plan reference query state
+  const [planReference, setPlanReference] = useState<ActivityItem[] | null>(null);
+  const [planRefLoading, setPlanRefLoading] = useState(false);
+  const [planRefChecked, setPlanRefChecked] = useState(false);
 
   // History State
   const [history, setHistory] = useState<Submission[]>([]);
@@ -99,6 +87,46 @@ export default function TechnoHandsWorkspace() {
     fetchHistory();
   }, [fetchHistory]);
 
+  // Fetch plan reference for Update logging
+  const checkPlanReference = useCallback(async (date: string, person: string, account: string) => {
+    setPlanRefLoading(true);
+    setPlanRefChecked(false);
+    setPlanReference(null);
+    try {
+      const finalPerson = person === 'Other' ? form.customPerson.trim() : person;
+      if (!finalPerson) return;
+      
+      const params = new URLSearchParams({
+        date,
+        person: finalPerson,
+        account,
+        entryType: 'Plan'
+      });
+      const res = await fetch(`/api/submissions?${params.toString()}`);
+      const data = await res.json();
+      if (res.ok && data.success && data.data.length > 0) {
+        setPlanReference(data.data[0].activityItems);
+      }
+    } catch (err) {
+      console.error('Error fetching plan reference:', err);
+    } finally {
+      setPlanRefLoading(false);
+      setPlanRefChecked(true);
+    }
+  }, [form.customPerson]);
+
+  useEffect(() => {
+    if (form.entryType === 'Update') {
+      const finalPerson = form.person === 'Other' ? form.customPerson.trim() : form.person;
+      if (form.date && finalPerson && form.account) {
+        checkPlanReference(form.date, form.person, form.account);
+      }
+    } else {
+      setPlanReference(null);
+      setPlanRefChecked(false);
+    }
+  }, [form.entryType, form.date, form.person, form.customPerson, form.account, checkPlanReference]);
+
   const handleParse = async () => {
     if (!form.rawText.trim()) {
       setMessage({ type: 'error', text: 'Please paste raw update text to parse with AI.' });
@@ -117,21 +145,9 @@ export default function TechnoHandsWorkspace() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        const parsed = data.data;
-        setForm((prev) => ({
-          ...prev,
-          platform: parsed.platform || '',
-          postType: parsed.postType || '',
-          postCount: Number(parsed.postCount) || 0,
-          outreachCount: Number(parsed.outreachCount) || 0,
-          pollsPosted: Number(parsed.pollsPosted) || 0,
-          groupsJoined: Number(parsed.groupsJoined) || 0,
-          groupPostCount: Number(parsed.groupPostCount) || 0,
-          engagementNotes: parsed.engagementNotes || '',
-          contentCreationNotes: parsed.contentCreationNotes || '',
-          parsedByAI: true,
-        }));
-        setMessage({ type: 'success', text: 'Text parsed successfully! Review the fields below and submit.' });
+        setActivityItems(data.data);
+        setForm((prev) => ({ ...prev, parsedByAI: true }));
+        setMessage({ type: 'success', text: 'Text parsed successfully! Review the items in the table below and submit.' });
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to parse text.' });
       }
@@ -140,6 +156,29 @@ export default function TechnoHandsWorkspace() {
     } finally {
       setParsing(false);
     }
+  };
+
+  const addRow = () => {
+    setActivityItems((prev) => [
+      ...prev,
+      { activityType: '', platform: '', description: '', count: null }
+    ]);
+  };
+
+  const deleteRow = (index: number) => {
+    setActivityItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateRow = (index: number, field: keyof ActivityItem, value: any) => {
+    setActivityItems((prev) => {
+      const next = [...prev];
+      if (field === 'count') {
+        next[index].count = value === '' ? null : Number(value);
+      } else {
+        next[index] = { ...next[index], [field]: value };
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -155,23 +194,21 @@ export default function TechnoHandsWorkspace() {
       return;
     }
 
+    if (activityItems.length === 0) {
+      setMessage({ type: 'error', text: 'Please add at least one activity item.' });
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const payload = {
         date: form.date,
         person: finalPersonName,
         account: form.account,
         entryType: form.entryType,
-        platform: form.platform,
-        postType: form.postType,
-        postCount: form.postCount,
-        outreachCount: form.outreachCount,
-        pollsPosted: form.pollsPosted,
-        groupsJoined: form.groupsJoined,
-        groupPostCount: form.groupPostCount,
-        engagementNotes: form.engagementNotes,
-        contentCreationNotes: form.contentCreationNotes,
         rawText: form.rawText || `Submitted manually by ${finalPersonName}`,
         parsedByAI: form.parsedByAI,
+        activityItems,
       };
 
       const res = await fetch('/api/submit', {
@@ -185,10 +222,13 @@ export default function TechnoHandsWorkspace() {
         setMessage({ type: 'success', text: 'Work log submitted successfully to Google Sheet!' });
         setForm({
           ...initialFormState,
-          person: form.person, // Keep the last selected person to reduce clicks
+          person: form.person,
           customPerson: form.customPerson,
-          account: form.account, // Keep the account too
+          account: form.account,
         });
+        setActivityItems([
+          { activityType: 'Post', platform: 'Instagram', description: '', count: null }
+        ]);
         fetchHistory();
       } else {
         setMessage({ type: 'error', text: data.error || 'Submission failed.' });
@@ -200,18 +240,17 @@ export default function TechnoHandsWorkspace() {
     }
   };
 
-  // Grouping submissions for historical pairing view
-  const getPairedHistory = () => {
-    let filtered = [...history];
-
+  // History filtering
+  const filteredHistory = () => {
+    let result = [...history];
     if (filterAccount !== 'All') {
-      filtered = filtered.filter((h) => h.account === filterAccount);
+      result = result.filter((h) => h.account === filterAccount);
     }
     if (filterStartDate) {
-      filtered = filtered.filter((h) => h.date >= filterStartDate);
+      result = result.filter((h) => h.date >= filterStartDate);
     }
     if (filterEndDate) {
-      filtered = filtered.filter((h) => h.date <= filterEndDate);
+      result = result.filter((h) => h.date <= filterEndDate);
     }
 
     const groups: {
@@ -224,7 +263,7 @@ export default function TechnoHandsWorkspace() {
       };
     } = {};
 
-    filtered.forEach((sub) => {
+    result.forEach((sub) => {
       const key = `${sub.date}|${sub.person}|${sub.account}`;
       if (!groups[key]) {
         groups[key] = { date: sub.date, person: sub.person, account: sub.account };
@@ -237,28 +276,76 @@ export default function TechnoHandsWorkspace() {
     });
 
     const list = Object.values(groups);
-    // Sort descending by date
     list.sort((a, b) => b.date.localeCompare(a.date));
     return list;
   };
 
-  const pairedList = getPairedHistory();
+  const pairedList = filteredHistory();
 
   return (
     <div className="min-h-screen bg-brand-bg text-brand-text">
       <Header title="Pramaan" subtitle="प्रमाण" role="technohands" />
 
+      {/* Autocomplete Datalists */}
+      <datalist id="activity-types">
+        <option value="Post" />
+        <option value="Outreach" />
+        <option value="Poll" />
+        <option value="Group Joining" />
+        <option value="Group Posting" />
+        <option value="Engagement" />
+        <option value="Content Planning" />
+      </datalist>
+
+      <datalist id="platforms">
+        <option value="Instagram" />
+        <option value="LinkedIn" />
+        <option value="Facebook" />
+        <option value="YouTube" />
+        <option value="Multiple" />
+      </datalist>
+
       <main className="mx-auto max-w-7xl px-6 py-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-          {/* Submission Form Column */}
+          {/* Main workspace */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Plan reference card (Conditional) */}
+            {form.entryType === 'Update' && planRefChecked && (
+              <div className={`rounded-lg border p-5 shadow-sm bg-white ${planReference ? 'border-orange-200 bg-orange-50/10' : 'border-stone-200'}`}>
+                <h3 className="text-sm font-bold text-stone-700 flex items-center gap-2">
+                  <ClipboardList className="text-brand-primary" size={16} />
+                  Plan Reference Card
+                </h3>
+                {planRefLoading ? (
+                  <p className="text-xs text-stone-400 mt-2">Checking for today's plan on sheet...</p>
+                ) : planReference ? (
+                  <div className="mt-3">
+                    <span className="text-xs font-semibold text-brand-primary uppercase">Today's Planned Activities:</span>
+                    <ul className="mt-2 space-y-1.5">
+                      {planReference.map((item, idx) => (
+                        <li key={idx} className="text-xs text-stone-600 list-disc list-inside">
+                          <strong className="text-stone-800">{item.activityType}</strong> 
+                          {item.platform && ` [${item.platform}]`} - {item.description} 
+                          {item.count !== null && ` (Target: ${item.count})`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-xs text-stone-500 mt-2 italic">
+                    No Plan found for this day — you can still submit.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-bold text-stone-800 flex items-center gap-2">
                 <FileText className="text-brand-primary" size={20} />
                 Daily Submission Log
               </h2>
               <p className="text-sm text-stone-500 mt-1">
-                Fill the fields manually or paste your raw WhatsApp message and parse with AI.
+                Paste your raw WhatsApp message to extract with Gemini, or build your activities list manually.
               </p>
 
               {message && (
@@ -276,10 +363,10 @@ export default function TechnoHandsWorkspace() {
                 </div>
               )}
 
-              {/* Step 1: AI Parser */}
+              {/* Paste Text parser */}
               <div className="mt-6 border-b border-stone-100 pb-6">
                 <label className="block text-sm font-semibold text-stone-700">
-                  Paste WhatsApp Update (Optional AI Parsing)
+                  Paste WhatsApp Update (Optional AI Extraction)
                 </label>
                 <div className="mt-2.5">
                   <textarea
@@ -298,14 +385,13 @@ export default function TechnoHandsWorkspace() {
                     className="flex items-center gap-2 rounded-md bg-brand-accent px-4 py-2 text-sm font-semibold text-brand-primary hover:bg-orange-100 disabled:opacity-50 transition-all duration-200"
                   >
                     <Sparkles size={15} />
-                    {parsing ? 'Parsing with Gemini...' : 'Parse with AI'}
+                    {parsing ? 'Extracting tasks with Gemini...' : 'Parse with AI'}
                   </button>
                 </div>
               </div>
 
-              {/* Step 2: Form Fields */}
+              {/* Form Metadata */}
               <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-                {/* Meta details */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-sm font-semibold text-stone-700">Reporting Date</label>
@@ -341,7 +427,7 @@ export default function TechnoHandsWorkspace() {
                     >
                       <option value="Yogesh">Yogesh</option>
                       <option value="Yogita">Yogita</option>
-                      <option value="Other">Other (Add Custom Name)</option>
+                      <option value="Other">Custom (Type Custom Name)</option>
                     </select>
                     {form.person === 'Other' && (
                       <input
@@ -384,113 +470,91 @@ export default function TechnoHandsWorkspace() {
                   </div>
                 </div>
 
-                {/* Main Metrics Fields */}
-                <h3 className="text-sm font-bold text-stone-800 pt-3 border-t border-stone-100 uppercase tracking-wider">
-                  Marketing Metrics
-                </h3>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Platform</label>
-                    <input
-                      type="text"
-                      value={form.platform}
-                      onChange={(e) => setForm({ ...form, platform: e.target.value })}
-                      placeholder="Instagram, LinkedIn..."
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
+                {/* Inline Editable Activities Table */}
+                <div className="pt-4 border-t border-stone-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-stone-800 uppercase tracking-wider">
+                      Work Activity Items
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={addRow}
+                      className="flex items-center gap-1 text-xs font-semibold text-brand-primary hover:underline"
+                    >
+                      <Plus size={14} />
+                      Add Row
+                    </button>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Post Type</label>
-                    <input
-                      type="text"
-                      value={form.postType}
-                      onChange={(e) => setForm({ ...form, postType: e.target.value })}
-                      placeholder="Reel, Carousel, Graphic..."
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Post Count</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.postCount}
-                      onChange={(e) => setForm({ ...form, postCount: parseInt(e.target.value, 10) || 0 })}
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Outreach count</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.outreachCount}
-                      onChange={(e) => setForm({ ...form, outreachCount: parseInt(e.target.value, 10) || 0 })}
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Polls Posted</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.pollsPosted}
-                      onChange={(e) => setForm({ ...form, pollsPosted: parseInt(e.target.value, 10) || 0 })}
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Groups Joined</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.groupsJoined}
-                      onChange={(e) => setForm({ ...form, groupsJoined: parseInt(e.target.value, 10) || 0 })}
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Group Posts</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.groupPostCount}
-                      onChange={(e) => setForm({ ...form, groupPostCount: parseInt(e.target.value, 10) || 0 })}
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Engagement Notes</label>
-                    <textarea
-                      rows={2}
-                      value={form.engagementNotes}
-                      onChange={(e) => setForm({ ...form, engagementNotes: e.target.value })}
-                      placeholder="Commented on 5 key profiles..."
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-stone-500">Content Creation Notes</label>
-                    <textarea
-                      rows={2}
-                      value={form.contentCreationNotes}
-                      onChange={(e) => setForm({ ...form, contentCreationNotes: e.target.value })}
-                      placeholder="Designed graphic for post #2..."
-                      className="mt-1 w-full rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-950 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
+                  <div className="overflow-x-auto border border-stone-200 rounded-md">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="bg-stone-50 border-b border-stone-200 text-xs font-bold text-stone-500 uppercase">
+                          <th className="py-2 px-3 w-1/4">Activity Type</th>
+                          <th className="py-2 px-3 w-1/4">Platform</th>
+                          <th className="py-2 px-3 w-1/3">Description</th>
+                          <th className="py-2 px-3 w-20">Count</th>
+                          <th className="py-2 px-2 text-center w-10">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-100 text-sm">
+                        {activityItems.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-stone-50/50">
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                list="activity-types"
+                                required
+                                value={item.activityType}
+                                onChange={(e) => updateRow(idx, 'activityType', e.target.value)}
+                                placeholder="Post, Outreach, Poll..."
+                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                list="platforms"
+                                value={item.platform || ''}
+                                onChange={(e) => updateRow(idx, 'platform', e.target.value || null)}
+                                placeholder="Instagram, LinkedIn..."
+                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                required
+                                value={item.description}
+                                onChange={(e) => updateRow(idx, 'description', e.target.value)}
+                                placeholder="Publish reel about new course..."
+                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.count !== null ? item.count : ''}
+                                onChange={(e) => updateRow(idx, 'count', e.target.value)}
+                                placeholder="e.g. 5"
+                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                              />
+                            </td>
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => deleteRow(idx)}
+                                disabled={activityItems.length === 1}
+                                className="text-stone-400 hover:text-red-500 disabled:opacity-30 transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
@@ -512,7 +576,7 @@ export default function TechnoHandsWorkspace() {
             <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
               <h3 className="text-base font-bold text-stone-800">WhatsApp Formatting Reference</h3>
               <p className="text-xs text-stone-500 mt-1">
-                You can write updates normally. Use these templates as references for best AI parsing:
+                The AI parser handles standard formatted text. Use this format as a reference:
               </p>
               <div className="mt-4 rounded bg-stone-50 p-3 text-xs text-stone-600 font-mono space-y-3">
                 <div>
@@ -528,7 +592,7 @@ export default function TechnoHandsWorkspace() {
 
             <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
               <h3 className="text-base font-bold text-stone-800">Quick Links</h3>
-              <p className="text-xs text-stone-500 mt-1">Access dashboard or documentation</p>
+              <p className="text-xs text-stone-500 mt-1">Access oversight dashboards</p>
               <ul className="mt-3 space-y-2 text-xs">
                 <li>
                   <a
@@ -596,57 +660,55 @@ export default function TechnoHandsWorkspace() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-stone-200 text-xs font-semibold text-stone-500 uppercase tracking-wider bg-stone-50/50">
-                    <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-4">Person</th>
-                    <th className="py-3 px-4">Account</th>
-                    <th className="py-3 px-4 text-center bg-stone-100/30">Plan Metrics</th>
-                    <th className="py-3 px-4 text-center bg-brand-accent/20">Update Metrics</th>
+                    <th className="py-3 px-4 w-32">Date</th>
+                    <th className="py-3 px-4 w-32">Person</th>
+                    <th className="py-3 px-4 w-40">Account</th>
+                    <th className="py-3 px-4 text-center bg-stone-100/30">Plan Activities</th>
+                    <th className="py-3 px-4 text-center bg-brand-accent/20">Update Activities</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100 text-sm">
-                  {pairedList.map((row, idx) => {
+                  {pairedList.map((row) => {
                     const key = `${row.date}-${row.person}-${row.account}`;
                     return (
                       <tr key={key} className="hover:bg-stone-50/50">
-                        <td className="py-3.5 px-4 font-medium text-stone-700 whitespace-nowrap">
+                        <td className="py-3.5 px-4 font-medium text-stone-700 whitespace-nowrap align-top">
                           {row.date}
                         </td>
-                        <td className="py-3.5 px-4 text-stone-600 whitespace-nowrap">
+                        <td className="py-3.5 px-4 text-stone-600 whitespace-nowrap align-top">
                           {row.person}
                         </td>
-                        <td className="py-3.5 px-4 text-stone-600 whitespace-nowrap">
+                        <td className="py-3.5 px-4 text-stone-600 whitespace-nowrap align-top">
                           {row.account}
                         </td>
                         {/* Plan Metrics */}
-                        <td className="py-3.5 px-4 bg-stone-100/10 text-xs text-stone-600">
+                        <td className="py-3.5 px-4 bg-stone-100/10 text-xs text-stone-600 align-top">
                           {row.plan ? (
-                            <div className="space-y-1">
-                              <div className="font-semibold text-stone-800">
-                                Posts: {row.plan.postCount} ({row.plan.postType || 'N/A'})
-                              </div>
-                              <div>Outreach: {row.plan.outreachCount}</div>
-                              <div>Polls: {row.plan.pollsPosted} | Groups: {row.plan.groupsJoined}</div>
-                              {row.plan.platform && <div>Platform: {row.plan.platform}</div>}
-                            </div>
+                            <ul className="space-y-1.5">
+                              {row.plan.activityItems?.map((item, idx) => (
+                                <li key={idx}>
+                                  • <span className="font-semibold text-stone-800">{item.activityType}</span>
+                                  {item.platform && ` [${item.platform}]`} - {item.description}
+                                  {item.count !== null && ` (Target: ${item.count})`}
+                                </li>
+                              ))}
+                            </ul>
                           ) : (
                             <span className="italic text-stone-400">No plan logged</span>
                           )}
                         </td>
                         {/* Update Metrics */}
-                        <td className="py-3.5 px-4 bg-brand-accent/10 text-xs text-stone-700">
+                        <td className="py-3.5 px-4 bg-brand-accent/10 text-xs text-stone-700 align-top">
                           {row.update ? (
-                            <div className="space-y-1">
-                              <div className="font-semibold text-brand-primary">
-                                Posts: {row.update.postCount} ({row.update.postType || 'N/A'})
-                              </div>
-                              <div>Outreach: {row.update.outreachCount}</div>
-                              <div>Polls: {row.update.pollsPosted} | Groups: {row.update.groupsJoined} ({row.update.groupPostCount} posts)</div>
-                              {row.update.engagementNotes && (
-                                <div className="text-stone-500 italic mt-1 line-clamp-2">
-                                  Eng: {row.update.engagementNotes}
-                                </div>
-                              )}
-                            </div>
+                            <ul className="space-y-1.5">
+                              {row.update.activityItems?.map((item, idx) => (
+                                <li key={idx}>
+                                  • <span className="font-semibold text-brand-primary">{item.activityType}</span>
+                                  {item.platform && ` [${item.platform}]`} - {item.description}
+                                  {item.count !== null && ` (Actual: ${item.count})`}
+                                </li>
+                              ))}
+                            </ul>
                           ) : (
                             <span className="italic text-stone-400">No update logged</span>
                           )}
