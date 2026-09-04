@@ -392,24 +392,8 @@ export default function TechnoHandsWorkspace() {
             <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
               <h3 className="text-base font-bold text-stone-800">Quick Instructions</h3>
               <p className="text-xs text-stone-500 mt-1 leading-relaxed">
-                Type your daily tasks naturally. Your message will be automatically recorded as permanent evidence and processed into the oversight dashboard.
+                Type your daily tasks naturally. Your message will be recorded as permanent evidence and processed for oversight.
               </p>
-            </div>
-
-            <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
-              <h3 className="text-base font-bold text-stone-800">Oversight Dashboard</h3>
-              <p className="text-xs text-stone-500 mt-1">Access audit workspace</p>
-              <ul className="mt-3 space-y-2 text-xs">
-                <li>
-                  <a
-                    href="/neuratantraai"
-                    target="_blank"
-                    className="text-brand-primary hover:underline font-semibold"
-                  >
-                    Go to Oversight Dashboard &rarr;
-                  </a>
-                </li>
-              </ul>
             </div>
           </div>
         </div>
