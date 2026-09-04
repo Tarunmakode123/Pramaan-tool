@@ -9,7 +9,8 @@ export async function POST(request: NextRequest) {
       response.cookies.set({
         name: 'pramaan_session_technohands',
         value: '',
-        maxAge: -1,
+        maxAge: 0,
+        expires: new Date(0),
         path: '/',
       });
     }
@@ -17,7 +18,8 @@ export async function POST(request: NextRequest) {
       response.cookies.set({
         name: 'pramaan_session_neuratantraai',
         value: '',
-        maxAge: -1,
+        maxAge: 0,
+        expires: new Date(0),
         path: '/',
       });
     }

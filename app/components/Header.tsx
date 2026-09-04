@@ -20,8 +20,7 @@ export default function Header({ title, subtitle, role }: HeaderProps) {
         body: JSON.stringify({ role }),
       });
       if (res.ok) {
-        router.refresh();
-        router.push(`/${role}/login`);
+        window.location.href = `/${role}/login`;
       }
     } catch (err) {
       console.error('Logout error:', err);
