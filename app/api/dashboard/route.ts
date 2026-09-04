@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySession } from '@/lib/session';
-import { getSubmissions, Submission, ActivityItem } from '@/lib/google-sheets';
-import { generateGapSummary, ActivityMismatch } from '@/lib/gemini';
+import { getSubmissions, Submission } from '@/lib/google-sheets';
 
 export const dynamic = 'force-dynamic';
 
-interface PairedRow {
+interface GroupedRow {
   date: string;
   person: string;
   account: string;
   plan: Submission | null;
   update: Submission | null;
-  hasGap: boolean;
-  gapSummary: string;
 }
 
 export async function GET(request: NextRequest) {
@@ -31,7 +28,7 @@ export async function GET(request: NextRequest) {
 
     const submissions = await getSubmissions();
 
-    // 1. Group submissions by date, person, account
+    // Group submissions by date, person, account (including singletons)
     const groups: {
       [key: string]: {
         date: string;
@@ -54,69 +51,21 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // 2. Convert to grouped rows and calculate gaps
-    const pairedRows: (PairedRow & { mismatches: ActivityMismatch[] })[] = [];
+    const groupedRows: GroupedRow[] = [];
 
     for (const key in groups) {
       const g = groups[key];
-      const plan = g.plan || null;
-      const update = g.update || null;
-
-      let hasGap = false;
-      let gapSummary = '';
-      const mismatches: ActivityMismatch[] = [];
-
-      if (plan && update) {
-        // Find mismatches rule-based
-        const planItems = plan.activityItems || [];
-        const updateItems = update.activityItems || [];
-
-        // For each item in Plan, check if there is a matching item in Update
-        planItems.forEach((pItem) => {
-          const pType = pItem.activityType.toLowerCase().trim();
-          const pPlat = (pItem.platform || '').toLowerCase().trim();
-
-          const match = updateItems.find((uItem) => {
-            const uType = uItem.activityType.toLowerCase().trim();
-            const uPlat = (uItem.platform || '').toLowerCase().trim();
-            return uType === pType && uPlat === pPlat;
-          });
-
-          if (!match) {
-            // Gap: Plan item not reported in Update
-            hasGap = true;
-            mismatches.push({ plan: pItem, type: 'missing' });
-          } else if (
-            pItem.count !== null &&
-            match.count !== null &&
-            match.count < pItem.count
-          ) {
-            // Variance: reported count is less than planned
-            hasGap = true;
-            mismatches.push({ plan: pItem, update: match, type: 'variance' });
-          }
-        });
-      } else if (plan && !update) {
-        hasGap = true;
-        gapSummary = 'No update submitted for the plan.';
-      } else if (!plan && update) {
-        gapSummary = 'No plan submitted for the update.';
-      }
-
-      pairedRows.push({
+      groupedRows.push({
         date: g.date,
         person: g.person,
         account: g.account,
-        plan,
-        update,
-        hasGap,
-        gapSummary,
-        mismatches,
+        plan: g.plan || null,
+        update: g.update || null,
       });
     }
 
-    // 3. Filter by date range
-    let filtered = pairedRows;
+    // Filter by date range
+    let filtered = groupedRows;
     if (startDate) {
       filtered = filtered.filter((r) => r.date >= startDate);
     }
@@ -124,22 +73,10 @@ export async function GET(request: NextRequest) {
       filtered = filtered.filter((r) => r.date <= endDate);
     }
 
-    // 4. Generate Gemini gap summaries in parallel for the filtered list
-    await Promise.all(
-      filtered.map(async (row) => {
-        if (row.hasGap && !row.gapSummary && row.mismatches.length > 0) {
-          row.gapSummary = await generateGapSummary(row.mismatches);
-        }
-      })
-    );
-
-    // Sort by date descending
+    // Sort descending by date
     filtered.sort((a, b) => b.date.localeCompare(a.date));
 
-    // Strip out the internal mismatches before sending to client
-    const clientData = filtered.map(({ mismatches, ...rest }) => rest);
-
-    return NextResponse.json({ success: true, data: clientData });
+    return NextResponse.json({ success: true, data: filtered });
   } catch (err: any) {
     console.error('API dashboard fetch error:', err);
     return NextResponse.json({ error: err.message || 'Failed to fetch dashboard data' }, { status: 500 });

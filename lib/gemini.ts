@@ -49,13 +49,15 @@ export async function parseTextWithGemini(rawText: string): Promise<ActivityItem
   "activityType": string,
   "platform": string | null,
   "description": string,
-  "count": number | null
+  "count": number | null,
+  "isPostable": boolean
 }
 Rules:
 - Create one item per distinct task or metric mentioned, however many there are.
 - If a task doesn't fit a common category (post, outreach, poll, group joining, group posting, engagement), invent a short reasonable activityType label rather than forcing it into an existing one.
 - Only fill "count" when a number is actually stated or clearly implied. Never invent numbers.
-- Keep "description" short (under 15 words).`;
+- Keep "description" short (under 15 words).
+- Set "isPostable": true if this activity represents something publicly published or visible (a post, reel, poll, published content), false if it's a private or unverifiable action (outreach/DMs, engagement on others' content, group joining, planning notes).`;
 
   const prompt = `Text to parse:\n"""\n${rawText}\n"""`;
 
@@ -71,52 +73,19 @@ Rules:
     if (!Array.isArray(parsed)) {
       throw new Error('Gemini did not return an array of items.');
     }
-    return parsed.map((item: any) => ({
-      activityType: String(item.activityType || '').trim(),
-      platform: item.platform ? String(item.platform).trim() : null,
-      description: String(item.description || '').trim(),
-      count: item.count !== undefined && item.count !== null ? Number(item.count) : null,
-    }));
+    return parsed.map((item: any) => {
+      const isPostable = Boolean(item.isPostable);
+      return {
+        activityType: String(item.activityType || '').trim(),
+        platform: item.platform ? String(item.platform).trim() : null,
+        description: String(item.description || '').trim(),
+        count: item.count !== undefined && item.count !== null ? Number(item.count) : null,
+        isPostable,
+        verifiedStatus: isPostable ? 'unreviewed' : 'not_independently_verifiable',
+      };
+    });
   } catch (err) {
     console.error('Failed to parse Gemini output as JSON:', cleaned, err);
     throw new Error('Failed to parse structured response from Gemini.');
-  }
-}
-
-export interface ActivityMismatch {
-  plan?: ActivityItem;
-  update?: ActivityItem;
-  type: 'missing' | 'variance';
-}
-
-export async function generateGapSummary(mismatches: ActivityMismatch[]): Promise<string> {
-  if (!mismatches || mismatches.length === 0) {
-    return '';
-  }
-
-  const mismatchDetails = mismatches.map((m) => {
-    if (m.type === 'missing') {
-      const p = m.plan!;
-      const platformStr = p.platform ? ` on ${p.platform}` : '';
-      return `- Planned task was missed entirely: "${p.activityType}${platformStr} (${p.description})"${p.count !== null ? ` with count ${p.count}` : ''}`;
-    } else {
-      const p = m.plan!;
-      const u = m.update!;
-      const platformStr = p.platform ? ` on ${p.platform}` : '';
-      return `- Planned "${p.activityType}${platformStr}" count was ${p.count}, but actually reported ${u.count}`;
-    }
-  }).join('\n');
-
-  const prompt = `Compare the following planned work discrepancies against what was actually completed:
-${mismatchDetails}
-
-Generate a concise, one-line natural language summary in English highlighting only what planned work was missed or fell short (e.g. 'Planned 5 group joins, reported 3' or 'Missed 2 group joins and 4 outreach messages'). Keep it under 15 words. Return ONLY the plain text summary, no markdown, no quotes, no extra text.`;
-
-  try {
-    const text = await callGemini(prompt);
-    return text.trim().replace(/^["']|["']$/g, '');
-  } catch (err) {
-    console.error('Error generating gap summary with Gemini:', err);
-    return 'Gap detected in completed activities.';
   }
 }

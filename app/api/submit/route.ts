@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySession } from '@/lib/session';
 import { appendSubmission, ActivityItem } from '@/lib/google-sheets';
+import { parseTextWithGemini } from '@/lib/gemini';
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,30 +20,38 @@ export async function POST(request: NextRequest) {
       account,
       entryType,
       rawText,
-      parsedByAI,
-      activityItems
     } = body;
 
     // Validate required fields
-    if (!date || !person || !account || !entryType) {
-      return NextResponse.json({ error: 'Missing required fields: date, person, account, entryType' }, { status: 400 });
+    if (!date || !person || !account || !entryType || !rawText || !rawText.trim()) {
+      return NextResponse.json({ error: 'Missing required fields: date, person, account, entryType, rawText' }, { status: 400 });
     }
 
     if (entryType !== 'Plan' && entryType !== 'Update') {
       return NextResponse.json({ error: 'Invalid entry type' }, { status: 400 });
     }
 
-    if (!Array.isArray(activityItems)) {
-      return NextResponse.json({ error: 'activityItems must be a valid array' }, { status: 400 });
-    }
+    let parsedByAI = false;
+    let activityItems: ActivityItem[] = [];
 
-    // Clean activity items
-    const cleanedItems: ActivityItem[] = activityItems.map((item: any) => ({
-      activityType: String(item.activityType || '').trim(),
-      platform: item.platform ? String(item.platform).trim() : null,
-      description: String(item.description || '').trim(),
-      count: item.count !== undefined && item.count !== null ? Number(item.count) : null,
-    }));
+    // Trigger Gemini extraction server-side
+    try {
+      activityItems = await parseTextWithGemini(rawText);
+      parsedByAI = true;
+    } catch (err) {
+      console.error('Server-side Gemini extraction failed, creating fallback item:', err);
+      // Fallback single item if AI parsing fails
+      activityItems = [
+        {
+          activityType: 'General Work Log',
+          platform: null,
+          description: rawText.trim().slice(0, 80),
+          count: null,
+          isPostable: false,
+          verifiedStatus: 'not_independently_verifiable',
+        },
+      ];
+    }
 
     // Append to Google Sheets
     const result = await appendSubmission({
@@ -50,9 +59,9 @@ export async function POST(request: NextRequest) {
       person,
       account,
       entryType,
-      rawText: rawText || `Submitted manually by ${person}`,
-      parsedByAI: Boolean(parsedByAI),
-      activityItems: cleanedItems,
+      rawText: rawText.trim(),
+      parsedByAI,
+      activityItems,
     });
 
     return NextResponse.json({ success: true, data: result });

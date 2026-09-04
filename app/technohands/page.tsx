@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Header from '@/app/components/Header';
-import { Sparkles, CheckCircle2, AlertCircle, Calendar, User, FileText, Filter, Plus, Trash2, ClipboardList } from 'lucide-react';
+import { Send, CheckCircle2, AlertCircle, FileText, Filter, ClipboardList } from 'lucide-react';
 
 interface ActivityItem {
   activityType: string;
   platform: string | null;
   description: string;
   count: number | null;
+  isPostable: boolean;
+  verifiedStatus: 'unreviewed' | 'verified' | 'disputed' | 'not_independently_verifiable';
 }
 
 interface Submission {
@@ -29,7 +31,6 @@ interface FormState {
   account: string;
   entryType: 'Plan' | 'Update';
   rawText: string;
-  parsedByAI: boolean;
 }
 
 export default function TechnoHandsWorkspace() {
@@ -45,19 +46,14 @@ export default function TechnoHandsWorkspace() {
     account: 'Neuratantra',
     entryType: 'Plan',
     rawText: '',
-    parsedByAI: false,
   };
 
   const [form, setForm] = useState<FormState>(initialFormState);
-  const [activityItems, setActivityItems] = useState<ActivityItem[]>([
-    { activityType: 'Post', platform: 'Instagram', description: '', count: null }
-  ]);
-  const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Plan reference query state
-  const [planReference, setPlanReference] = useState<ActivityItem[] | null>(null);
+  const [planReference, setPlanReference] = useState<Submission | null>(null);
   const [planRefLoading, setPlanRefLoading] = useState(false);
   const [planRefChecked, setPlanRefChecked] = useState(false);
 
@@ -105,7 +101,7 @@ export default function TechnoHandsWorkspace() {
       const res = await fetch(`/api/submissions?${params.toString()}`);
       const data = await res.json();
       if (res.ok && data.success && data.data.length > 0) {
-        setPlanReference(data.data[0].activityItems);
+        setPlanReference(data.data[0]);
       }
     } catch (err) {
       console.error('Error fetching plan reference:', err);
@@ -127,60 +123,6 @@ export default function TechnoHandsWorkspace() {
     }
   }, [form.entryType, form.date, form.person, form.customPerson, form.account, checkPlanReference]);
 
-  const handleParse = async () => {
-    if (!form.rawText.trim()) {
-      setMessage({ type: 'error', text: 'Please paste raw update text to parse with AI.' });
-      return;
-    }
-
-    setParsing(true);
-    setMessage(null);
-
-    try {
-      const res = await fetch('/api/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rawText: form.rawText }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setActivityItems(data.data);
-        setForm((prev) => ({ ...prev, parsedByAI: true }));
-        setMessage({ type: 'success', text: 'Text parsed successfully! Review the items in the table below and submit.' });
-      } else {
-        setMessage({ type: 'error', text: data.error || 'Failed to parse text.' });
-      }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Error contacting AI parser.' });
-    } finally {
-      setParsing(false);
-    }
-  };
-
-  const addRow = () => {
-    setActivityItems((prev) => [
-      ...prev,
-      { activityType: '', platform: '', description: '', count: null }
-    ]);
-  };
-
-  const deleteRow = (index: number) => {
-    setActivityItems((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const updateRow = (index: number, field: keyof ActivityItem, value: any) => {
-    setActivityItems((prev) => {
-      const next = [...prev];
-      if (field === 'count') {
-        next[index].count = value === '' ? null : Number(value);
-      } else {
-        next[index] = { ...next[index], [field]: value };
-      }
-      return next;
-    });
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -194,8 +136,8 @@ export default function TechnoHandsWorkspace() {
       return;
     }
 
-    if (activityItems.length === 0) {
-      setMessage({ type: 'error', text: 'Please add at least one activity item.' });
+    if (!form.rawText.trim()) {
+      setMessage({ type: 'error', text: 'Please type your log message before submitting.' });
       setSubmitting(false);
       return;
     }
@@ -206,9 +148,7 @@ export default function TechnoHandsWorkspace() {
         person: finalPersonName,
         account: form.account,
         entryType: form.entryType,
-        rawText: form.rawText || `Submitted manually by ${finalPersonName}`,
-        parsedByAI: form.parsedByAI,
-        activityItems,
+        rawText: form.rawText.trim(),
       };
 
       const res = await fetch('/api/submit', {
@@ -219,16 +159,11 @@ export default function TechnoHandsWorkspace() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setMessage({ type: 'success', text: 'Work log submitted successfully to Google Sheet!' });
-        setForm({
-          ...initialFormState,
-          person: form.person,
-          customPerson: form.customPerson,
-          account: form.account,
-        });
-        setActivityItems([
-          { activityType: 'Post', platform: 'Instagram', description: '', count: null }
-        ]);
+        setMessage({ type: 'success', text: 'Work log submitted successfully!' });
+        setForm((prev) => ({
+          ...prev,
+          rawText: '',
+        }));
         fetchHistory();
       } else {
         setMessage({ type: 'error', text: data.error || 'Submission failed.' });
@@ -240,7 +175,7 @@ export default function TechnoHandsWorkspace() {
     }
   };
 
-  // History filtering
+  // History pairing
   const filteredHistory = () => {
     let result = [...history];
     if (filterAccount !== 'All') {
@@ -286,50 +221,24 @@ export default function TechnoHandsWorkspace() {
     <div className="min-h-screen bg-brand-bg text-brand-text">
       <Header title="Pramaan" subtitle="प्रमाण" role="technohands" />
 
-      {/* Autocomplete Datalists */}
-      <datalist id="activity-types">
-        <option value="Post" />
-        <option value="Outreach" />
-        <option value="Poll" />
-        <option value="Group Joining" />
-        <option value="Group Posting" />
-        <option value="Engagement" />
-        <option value="Content Planning" />
-      </datalist>
-
-      <datalist id="platforms">
-        <option value="Instagram" />
-        <option value="LinkedIn" />
-        <option value="Facebook" />
-        <option value="YouTube" />
-        <option value="Multiple" />
-      </datalist>
-
       <main className="mx-auto max-w-7xl px-6 py-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Main workspace */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Plan reference card (Conditional) */}
+            {/* Plan reference card (Conditional when logging Update) */}
             {form.entryType === 'Update' && planRefChecked && (
               <div className={`rounded-lg border p-5 shadow-sm bg-white ${planReference ? 'border-orange-200 bg-orange-50/10' : 'border-stone-200'}`}>
                 <h3 className="text-sm font-bold text-stone-700 flex items-center gap-2">
                   <ClipboardList className="text-brand-primary" size={16} />
-                  Plan Reference Card
+                  Today's Plan Reference
                 </h3>
                 {planRefLoading ? (
-                  <p className="text-xs text-stone-400 mt-2">Checking for today's plan on sheet...</p>
+                  <p className="text-xs text-stone-400 mt-2">Checking for today's plan...</p>
                 ) : planReference ? (
                   <div className="mt-3">
-                    <span className="text-xs font-semibold text-brand-primary uppercase">Today's Planned Activities:</span>
-                    <ul className="mt-2 space-y-1.5">
-                      {planReference.map((item, idx) => (
-                        <li key={idx} className="text-xs text-stone-600 list-disc list-inside">
-                          <strong className="text-stone-800">{item.activityType}</strong> 
-                          {item.platform && ` [${item.platform}]`} - {item.description} 
-                          {item.count !== null && ` (Target: ${item.count})`}
-                        </li>
-                      ))}
-                    </ul>
+                    <p className="text-xs text-stone-700 bg-stone-50 p-2.5 rounded border border-stone-200 font-mono whitespace-pre-wrap">
+                      {planReference.rawText}
+                    </p>
                   </div>
                 ) : (
                   <p className="text-xs text-stone-500 mt-2 italic">
@@ -345,7 +254,7 @@ export default function TechnoHandsWorkspace() {
                 Daily Submission Log
               </h2>
               <p className="text-sm text-stone-500 mt-1">
-                Paste your raw WhatsApp message to extract with Gemini, or build your activities list manually.
+                Select your metadata and type your update below.
               </p>
 
               {message && (
@@ -363,35 +272,8 @@ export default function TechnoHandsWorkspace() {
                 </div>
               )}
 
-              {/* Paste Text parser */}
-              <div className="mt-6 border-b border-stone-100 pb-6">
-                <label className="block text-sm font-semibold text-stone-700">
-                  Paste WhatsApp Update (Optional AI Extraction)
-                </label>
-                <div className="mt-2.5">
-                  <textarea
-                    rows={4}
-                    value={form.rawText}
-                    onChange={(e) => setForm({ ...form, rawText: e.target.value })}
-                    placeholder="Paste the daily WhatsApp message here. E.g.&#10;Yogesh Update:&#10;- Instagram: 1 Reel published&#10;- LinkedIn: 5 outreach candidate connects&#10;- Joined 3 groups, shared 2 posts"
-                    className="w-full rounded-md border border-stone-200 p-3 text-sm text-stone-950 placeholder-stone-400 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                  />
-                </div>
-                <div className="mt-3 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleParse}
-                    disabled={parsing || !form.rawText.trim()}
-                    className="flex items-center gap-2 rounded-md bg-brand-accent px-4 py-2 text-sm font-semibold text-brand-primary hover:bg-orange-100 disabled:opacity-50 transition-all duration-200"
-                  >
-                    <Sparkles size={15} />
-                    {parsing ? 'Extracting tasks with Gemini...' : 'Parse with AI'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Form Metadata */}
               <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+                {/* Meta Selectors */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-sm font-semibold text-stone-700">Reporting Date</label>
@@ -470,129 +352,53 @@ export default function TechnoHandsWorkspace() {
                   </div>
                 </div>
 
-                {/* Inline Editable Activities Table */}
-                <div className="pt-4 border-t border-stone-100">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-bold text-stone-800 uppercase tracking-wider">
-                      Work Activity Items
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={addRow}
-                      className="flex items-center gap-1 text-xs font-semibold text-brand-primary hover:underline"
-                    >
-                      <Plus size={14} />
-                      Add Row
-                    </button>
-                  </div>
-
-                  <div className="overflow-x-auto border border-stone-200 rounded-md">
-                    <table className="w-full text-left border-collapse min-w-[600px]">
-                      <thead>
-                        <tr className="bg-stone-50 border-b border-stone-200 text-xs font-bold text-stone-500 uppercase">
-                          <th className="py-2 px-3 w-1/4">Activity Type</th>
-                          <th className="py-2 px-3 w-1/4">Platform</th>
-                          <th className="py-2 px-3 w-1/3">Description</th>
-                          <th className="py-2 px-3 w-20">Count</th>
-                          <th className="py-2 px-2 text-center w-10">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-stone-100 text-sm">
-                        {activityItems.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-stone-50/50">
-                            <td className="p-2">
-                              <input
-                                type="text"
-                                list="activity-types"
-                                required
-                                value={item.activityType}
-                                onChange={(e) => updateRow(idx, 'activityType', e.target.value)}
-                                placeholder="Post, Outreach, Poll..."
-                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <input
-                                type="text"
-                                list="platforms"
-                                value={item.platform || ''}
-                                onChange={(e) => updateRow(idx, 'platform', e.target.value || null)}
-                                placeholder="Instagram, LinkedIn..."
-                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <input
-                                type="text"
-                                required
-                                value={item.description}
-                                onChange={(e) => updateRow(idx, 'description', e.target.value)}
-                                placeholder="Publish reel about new course..."
-                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <input
-                                type="number"
-                                min={0}
-                                value={item.count !== null ? item.count : ''}
-                                onChange={(e) => updateRow(idx, 'count', e.target.value)}
-                                placeholder="e.g. 5"
-                                className="w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-900 bg-white focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                              />
-                            </td>
-                            <td className="p-2 text-center">
-                              <button
-                                type="button"
-                                onClick={() => deleteRow(idx)}
-                                disabled={activityItems.length === 1}
-                                className="text-stone-400 hover:text-red-500 disabled:opacity-30 transition-colors"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                {/* Primary Textarea Input */}
+                <div>
+                  <label className="block text-sm font-semibold text-stone-700">
+                    {form.entryType === 'Plan' ? "Type what you're doing today" : "Type what you did today"}
+                  </label>
+                  <div className="mt-2">
+                    <textarea
+                      rows={6}
+                      required
+                      value={form.rawText}
+                      onChange={(e) => setForm({ ...form, rawText: e.target.value })}
+                      placeholder={
+                        form.entryType === 'Plan'
+                          ? "E.g. Today's Plan:\n- Instagram: 1 Reel on AI Agents\n- LinkedIn: 10 outreach connect requests\n- Join 3 growth groups"
+                          : "E.g. Today's Update:\n- Posted 1 Reel on Instagram\n- Sent 10 candidate outreach DMs on LinkedIn\n- Joined 3 marketing groups and posted 2 updates"
+                      }
+                      className="w-full rounded-md border border-stone-200 p-3.5 text-sm text-stone-950 placeholder-stone-400 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary font-mono"
+                    />
                   </div>
                 </div>
 
-                <div className="pt-4 flex justify-end">
+                <div className="pt-2 flex justify-end">
                   <button
                     type="submit"
-                    disabled={submitting}
-                    className="w-full sm:w-auto rounded-md bg-brand-primary px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 disabled:opacity-50 transition-all duration-200"
+                    disabled={submitting || !form.rawText.trim()}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-md bg-brand-primary px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 disabled:opacity-50 transition-all duration-200"
                   >
-                    {submitting ? 'Submitting...' : 'Confirm & Submit to Sheet'}
+                    <Send size={15} />
+                    {submitting ? 'Submitting Log...' : 'Submit Log'}
                   </button>
                 </div>
               </form>
             </div>
           </div>
 
-          {/* Submission Info / Guidelines */}
+          {/* Reference Info */}
           <div className="space-y-6">
             <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
-              <h3 className="text-base font-bold text-stone-800">WhatsApp Formatting Reference</h3>
-              <p className="text-xs text-stone-500 mt-1">
-                The AI parser handles standard formatted text. Use this format as a reference:
+              <h3 className="text-base font-bold text-stone-800">Quick Instructions</h3>
+              <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                Type your daily tasks naturally. Your message will be automatically recorded as permanent evidence and processed into the oversight dashboard.
               </p>
-              <div className="mt-4 rounded bg-stone-50 p-3 text-xs text-stone-600 font-mono space-y-3">
-                <div>
-                  <span className="font-semibold text-brand-primary block">Plan Example:</span>
-                  "Plan: Instagram Graphic, 1 post. LinkedIn outreach 10 connect requests. Join 3 growth groups."
-                </div>
-                <div>
-                  <span className="font-semibold text-brand-primary block">Update Example:</span>
-                  "Update: Posted 1 Instagram graphic. Sent 10 LinkedIn candidate messages. Joined 3 groups, shared 3 posts. Handled DM engagement."
-                </div>
-              </div>
             </div>
 
             <div className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
-              <h3 className="text-base font-bold text-stone-800">Quick Links</h3>
-              <p className="text-xs text-stone-500 mt-1">Access oversight dashboards</p>
+              <h3 className="text-base font-bold text-stone-800">Oversight Dashboard</h3>
+              <p className="text-xs text-stone-500 mt-1">Access audit workspace</p>
               <ul className="mt-3 space-y-2 text-xs">
                 <li>
                   <a
@@ -608,13 +414,13 @@ export default function TechnoHandsWorkspace() {
           </div>
         </div>
 
-        {/* Bottom Section: Self History Table */}
+        {/* History Table */}
         <div className="mt-8 rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-stone-100 pb-4 gap-4">
             <div>
               <h2 className="text-lg font-bold text-stone-800">Your Submission History</h2>
               <p className="text-xs text-stone-500 mt-0.5">
-                Past logs submitted by TechnoHands. Paired Plan vs. Update metrics.
+                Past logs submitted by your team.
               </p>
             </div>
 
@@ -650,7 +456,6 @@ export default function TechnoHandsWorkspace() {
             </div>
           </div>
 
-          {/* Table Container */}
           <div className="mt-6 overflow-x-auto">
             {historyLoading ? (
               <p className="text-center py-6 text-sm text-stone-400">Loading history records...</p>
@@ -663,8 +468,8 @@ export default function TechnoHandsWorkspace() {
                     <th className="py-3 px-4 w-32">Date</th>
                     <th className="py-3 px-4 w-32">Person</th>
                     <th className="py-3 px-4 w-40">Account</th>
-                    <th className="py-3 px-4 text-center bg-stone-100/30">Plan Activities</th>
-                    <th className="py-3 px-4 text-center bg-brand-accent/20">Update Activities</th>
+                    <th className="py-3 px-4 text-center bg-stone-100/30">Plan</th>
+                    <th className="py-3 px-4 text-center bg-brand-accent/20">Update</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100 text-sm">
@@ -681,34 +486,16 @@ export default function TechnoHandsWorkspace() {
                         <td className="py-3.5 px-4 text-stone-600 whitespace-nowrap align-top">
                           {row.account}
                         </td>
-                        {/* Plan Metrics */}
                         <td className="py-3.5 px-4 bg-stone-100/10 text-xs text-stone-600 align-top">
                           {row.plan ? (
-                            <ul className="space-y-1.5">
-                              {row.plan.activityItems?.map((item, idx) => (
-                                <li key={idx}>
-                                  • <span className="font-semibold text-stone-800">{item.activityType}</span>
-                                  {item.platform && ` [${item.platform}]`} - {item.description}
-                                  {item.count !== null && ` (Target: ${item.count})`}
-                                </li>
-                              ))}
-                            </ul>
+                            <p className="font-mono whitespace-pre-wrap">{row.plan.rawText}</p>
                           ) : (
                             <span className="italic text-stone-400">No plan logged</span>
                           )}
                         </td>
-                        {/* Update Metrics */}
                         <td className="py-3.5 px-4 bg-brand-accent/10 text-xs text-stone-700 align-top">
                           {row.update ? (
-                            <ul className="space-y-1.5">
-                              {row.update.activityItems?.map((item, idx) => (
-                                <li key={idx}>
-                                  • <span className="font-semibold text-brand-primary">{item.activityType}</span>
-                                  {item.platform && ` [${item.platform}]`} - {item.description}
-                                  {item.count !== null && ` (Actual: ${item.count})`}
-                                </li>
-                              ))}
-                            </ul>
+                            <p className="font-mono whitespace-pre-wrap">{row.update.rawText}</p>
                           ) : (
                             <span className="italic text-stone-400">No update logged</span>
                           )}

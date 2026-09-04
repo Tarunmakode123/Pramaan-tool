@@ -19,6 +19,10 @@ export interface ActivityItem {
   platform: string | null;
   description: string;
   count: number | null;
+  isPostable: boolean;
+  verifiedStatus: 'unreviewed' | 'verified' | 'disputed' | 'not_independently_verifiable';
+  verifiedBy?: string | null;
+  verifiedAt?: string | null;
 }
 
 export interface Submission {
@@ -161,4 +165,75 @@ export async function getSubmissions(): Promise<Submission[]> {
       activityItems: parsedItems,
     };
   });
+}
+
+export async function updateSubmissionItemVerification(params: {
+  date: string;
+  person: string;
+  account: string;
+  entryType: string;
+  itemIndex: number;
+  verifiedStatus: 'unreviewed' | 'verified' | 'disputed' | 'not_independently_verifiable';
+  verifiedBy?: string;
+}): Promise<boolean> {
+  const sheets = getSheetsClient();
+  await initializeSheet();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_NAME}!A2:H`,
+  });
+
+  const rows = response.data.values;
+  if (!rows || rows.length === 0) {
+    return false;
+  }
+
+  // Find matching row
+  const matchIndex = rows.findIndex((row) => {
+    const rowDate = row[1] || '';
+    const rowPerson = (row[2] || '').toLowerCase().trim();
+    const rowAccount = (row[3] || '').toLowerCase().trim();
+    const rowType = row[4] || '';
+
+    return (
+      rowDate === params.date &&
+      rowPerson === params.person.toLowerCase().trim() &&
+      rowAccount === params.account.toLowerCase().trim() &&
+      rowType === params.entryType
+    );
+  });
+
+  if (matchIndex === -1) {
+    return false;
+  }
+
+  const rowIndex = matchIndex + 2; // +2 for 1-based index and header row
+  const targetRow = rows[matchIndex];
+  let items: ActivityItem[] = [];
+  try {
+    items = JSON.parse(targetRow[7] || '[]');
+  } catch (e) {
+    return false;
+  }
+
+  if (params.itemIndex < 0 || params.itemIndex >= items.length) {
+    return false;
+  }
+
+  // Read-Modify-Write item verification status
+  items[params.itemIndex].verifiedStatus = params.verifiedStatus;
+  items[params.itemIndex].verifiedBy = params.verifiedBy || 'NeuraTantraAI Reviewer';
+  items[params.itemIndex].verifiedAt = new Date().toISOString();
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_NAME}!H${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: {
+      values: [[JSON.stringify(items)]],
+    },
+  });
+
+  return true;
 }
