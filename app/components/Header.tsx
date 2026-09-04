@@ -20,7 +20,7 @@ export default function Header({ title, subtitle, role }: HeaderProps) {
         body: JSON.stringify({ role }),
       });
       if (res.ok) {
-        window.location.href = `/${role}/login`;
+        window.location.href = '/';
       }
     } catch (err) {
       console.error('Logout error:', err);
