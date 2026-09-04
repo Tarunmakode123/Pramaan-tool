@@ -1,46 +1,58 @@
 import { ActivityItem } from './google-sheets';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+function getGeminiApiKey(): string {
+  let key = (process.env.GEMINI_API_KEY || '').trim();
+  return key.replace(/^["']|["']$/g, '');
+}
 
 async function callGemini(prompt: string, systemInstruction?: string): Promise<string> {
-  if (!GEMINI_API_KEY) {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
     throw new Error('Missing GEMINI_API_KEY environment variable.');
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-  
-  const payload: any = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.1,
-    },
-  };
+  // Model fallback candidates
+  const models = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash'];
+  let lastError = '';
 
-  if (systemInstruction) {
-    payload.systemInstruction = {
-      parts: [{ text: systemInstruction }]
+  for (const model of models) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    
+    const payload: any = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+      },
     };
+
+    if (systemInstruction) {
+      payload.systemInstruction = {
+        parts: [{ text: systemInstruction }]
+      };
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) return text;
+      } else {
+        lastError = await response.text();
+      }
+    } catch (err: any) {
+      lastError = err.message || String(err);
+    }
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Gemini API call failed: ${response.statusText} - ${errText}`);
-  }
-
-  const result = await response.json();
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error('Gemini API returned an empty response.');
-  }
-  return text;
+  throw new Error(`Gemini API call failed across models: ${lastError}`);
 }
 
 export async function parseTextWithGemini(rawText: string): Promise<ActivityItem[]> {

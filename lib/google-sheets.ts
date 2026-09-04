@@ -1,6 +1,10 @@
 import { google } from 'googleapis';
 
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID || '';
+function getSpreadsheetId(): string {
+  let id = (process.env.GOOGLE_SHEET_ID || '').trim();
+  return id.replace(/^["']|["']$/g, '');
+}
+
 const TAB_NAME = 'Submissions';
 
 export const COLUMN_HEADERS = [
@@ -37,11 +41,16 @@ export interface Submission {
 }
 
 function getSheetsClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  let privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '';
+  let email = (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '').trim();
+  email = email.replace(/^["']|["']$/g, '');
+
+  let privateKey = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '').trim();
+  privateKey = privateKey.replace(/^["']|["']$/g, '');
   privateKey = privateKey.replace(/\\n/g, '\n');
 
-  if (!email || !privateKey || !SPREADSHEET_ID) {
+  const spreadsheetId = getSpreadsheetId();
+
+  if (!email || !privateKey || !spreadsheetId) {
     throw new Error('Missing Google Sheets API configuration environment variables.');
   }
 
@@ -57,9 +66,10 @@ function getSheetsClient() {
 
 export async function initializeSheet(): Promise<void> {
   const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
 
   const meta = await sheets.spreadsheets.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
   });
 
   const tabExists = meta.data.sheets?.some(
@@ -68,7 +78,7 @@ export async function initializeSheet(): Promise<void> {
 
   if (!tabExists) {
     await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
+      spreadsheetId: getSpreadsheetId(),
       requestBody: {
         requests: [
           {
@@ -84,14 +94,14 @@ export async function initializeSheet(): Promise<void> {
   }
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: getSpreadsheetId(),
     range: `${TAB_NAME}!A1:H1`,
   });
 
   const row = response.data.values;
   if (!row || row.length === 0 || row[0].length === 0) {
     await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
+      spreadsheetId: getSpreadsheetId(),
       range: `${TAB_NAME}!A1:H1`,
       valueInputOption: 'RAW',
       requestBody: {
@@ -118,7 +128,7 @@ export async function appendSubmission(submission: Omit<Submission, 'timestamp'>
   ];
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: getSpreadsheetId(),
     range: `${TAB_NAME}!A:H`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
@@ -137,7 +147,7 @@ export async function getSubmissions(): Promise<Submission[]> {
   await initializeSheet();
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: getSpreadsheetId(),
     range: `${TAB_NAME}!A2:H`,
   });
 
@@ -180,7 +190,7 @@ export async function updateSubmissionItemVerification(params: {
   await initializeSheet();
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: getSpreadsheetId(),
     range: `${TAB_NAME}!A2:H`,
   });
 
@@ -227,7 +237,7 @@ export async function updateSubmissionItemVerification(params: {
   items[params.itemIndex].verifiedAt = new Date().toISOString();
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: getSpreadsheetId(),
     range: `${TAB_NAME}!H${rowIndex}`,
     valueInputOption: 'RAW',
     requestBody: {
