@@ -9,15 +9,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
     }
 
-    const envPasscode = role === 'technohands'
+    let envPasscode = (role === 'technohands'
       ? process.env.TECHNOHANDS_PASSCODE
-      : process.env.NEURATANTRAAI_PASSCODE;
+      : process.env.NEURATANTRAAI_PASSCODE) || '';
+    
+    envPasscode = envPasscode.trim().replace(/^["']|["']$/g, '');
+    const userPasscode = (passcode || '').trim();
 
     if (!envPasscode) {
       return NextResponse.json({ error: 'Server authentication passcode is not configured' }, { status: 500 });
     }
 
-    if (passcode !== envPasscode) {
+    if (userPasscode !== envPasscode) {
       return NextResponse.json({ error: 'Incorrect passcode' }, { status: 401 });
     }
 

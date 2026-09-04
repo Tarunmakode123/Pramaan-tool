@@ -24,8 +24,7 @@ export default function NeuraTantraAILogin() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        router.refresh();
-        router.push(data.redirectUrl);
+        window.location.href = data.redirectUrl;
       } else {
         setError(data.error || 'Authentication failed');
       }
