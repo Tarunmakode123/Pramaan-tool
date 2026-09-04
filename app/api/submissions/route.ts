@@ -41,6 +41,13 @@ export async function GET(request: NextRequest) {
       data = data.filter((sub) => sub.entryType === entryType);
     }
 
+    // Sort matching submissions by timestamp descending so data[0] is guaranteed to be the latest / most recent
+    data.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeB - timeA;
+    });
+
     return NextResponse.json({ success: true, data });
   } catch (err: any) {
     console.error('API submissions fetch error:', err);

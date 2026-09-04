@@ -28,6 +28,13 @@ export async function GET(request: NextRequest) {
 
     const submissions = await getSubmissions();
 
+    // Sort submissions ascending by timestamp so later/newer submissions overwrite earlier ones for the same key
+    submissions.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeA - timeB;
+    });
+
     // Group submissions by date, person, account (including singletons)
     const groups: {
       [key: string]: {
