@@ -54,17 +54,30 @@ export async function POST(request: NextRequest) {
     }
 
     // Append to Google Sheets
-    const result = await appendSubmission({
-      date,
-      person,
-      account,
-      entryType,
-      rawText: rawText.trim(),
-      parsedByAI,
-      activityItems,
-    });
+    try {
+      const result = await appendSubmission({
+        date,
+        person,
+        account,
+        entryType,
+        rawText: rawText.trim(),
+        parsedByAI,
+        activityItems,
+      });
 
-    return NextResponse.json({ success: true, data: result });
+      return NextResponse.json({ success: true, data: result });
+    } catch (sheetsErr: any) {
+      console.error('Google Sheets append error:', sheetsErr);
+      const msg = sheetsErr.message || String(sheetsErr);
+      if (msg.includes('Requested entity was not found')) {
+        return NextResponse.json({
+          error: 'Google Sheets Error: Spreadsheet ID not found or missing permissions. Please verify GOOGLE_SHEET_ID in Vercel environment variables and ensure the Google Sheet is shared with pramaan-db@principal-iris-471514-v6.iam.gserviceaccount.com as Editor.'
+        }, { status: 404 });
+      }
+      return NextResponse.json({
+        error: `Google Sheets Error: ${msg}`
+      }, { status: 500 });
+    }
   } catch (err: any) {
     console.error('API submit error:', err);
     return NextResponse.json({ error: err.message || 'Failed to submit log to Google Sheet' }, { status: 500 });
